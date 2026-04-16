@@ -212,10 +212,32 @@ const STATE = {
 };
 
 function refreshData() {
-  const rawDay = ALL_WEEKS[STATE.weekIdx][DAYS[STATE.dayIdx]];
+  const rawWeek = ALL_WEEKS[STATE.weekIdx];
+  const rawDay = rawWeek ? rawWeek[DAYS[STATE.dayIdx]] : null;
+
+  if (!rawDay || !rawDay.length) {
+    STATE.slotTimes = [];
+    STATE.intervals = [];
+    STATE.summary = {};
+    console.warn('[WFM] No raw data found for selection.', {
+      weekIdx: STATE.weekIdx,
+      dayIdx: STATE.dayIdx,
+      day: DAYS[STATE.dayIdx]
+    });
+    return;
+  }
+
   STATE.slotTimes = generateSlotTimes(STATE.intervalMin);
   STATE.intervals = calcIntervals(rawDay, STATE.intervalMin, STATE.occupancy);
   STATE.summary   = calcDaySummary(STATE.intervals);
+  console.log('[WFM] Data refreshed.', {
+    day: DAYS[STATE.dayIdx],
+    week: STATE.weekIdx + 1,
+    intervalMin: STATE.intervalMin,
+    intervals: STATE.intervals.length,
+    avgAcc: STATE.summary.avgAcc,
+    totalAct: STATE.summary.totalAct
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -451,7 +473,8 @@ function renderKPIs() {
 
   const gapColor = s.avgGap < -3 ? 'up' : s.avgGap < 0 ? 'warn' : 'down';
   setKPI('kpi-gap', (s.avgGap > 0 ? '+' : '') + s.avgGap);
-  const gapEl = document.getElementById('kpi-gap-delta');
+  const gapEl = document.getElementById('kpi-gap-label');
+  if (!gapEl) return;
   gapEl.textContent = s.avgGap < -3 ? '⚠ Understaffed' : s.avgGap < 0 ? '⚡ Marginal' : '✓ Adequate';
   gapEl.className = 'kpi-delta ' + gapColor;
 
@@ -954,7 +977,57 @@ document.addEventListener('mousemove', e => {
 ═══════════════════════════════════════════════════════════ */
 
 function renderAll() {
+  initApp();
+}
+
+function renderEmptyState(message = 'No data available for the selected filters.') {
+  setKPI('kpi-volume', '—');
+  setKPI('kpi-aht', '—');
+  setKPI('kpi-gap', '—');
+  setKPI('kpi-ila', '—');
+  setKPI('kpi-backlog', '—');
+  setKPI('kpi-peaks', '—');
+
+  const fallbackTargets = [
+    ['heatmapGrid', `<div class="empty-state">${message}</div>`],
+    ['decompBars', `<div class="empty-state">${message}</div>`],
+    ['peaksList', `<div class="empty-state">${message}</div>`],
+    ['reforecastBody', `<div class="empty-state">${message}</div>`],
+    ['insightsList', `<div class="empty-state">${message}</div>`],
+    ['simImpactGrid', `<div class="empty-state">${message}</div>`],
+    ['emailPreview', `<div class="empty-state">${message}</div>`]
+  ];
+
+  fallbackTargets.forEach(([id, html]) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+
+  const intervalBody = document.getElementById('intervalBody');
+  if (intervalBody) {
+    intervalBody.innerHTML = `<tr><td colspan="11">${message}</td></tr>`;
+  }
+}
+
+function initApp() {
+  console.log('[WFM] initApp started.');
   refreshData();
+
+  const hasIntervals = Array.isArray(STATE.intervals) && STATE.intervals.length > 0;
+  const hasSummary = STATE.summary && typeof STATE.summary.totalAct === 'number';
+  console.log('[WFM] initApp validation.', {
+    hasIntervals,
+    intervalCount: STATE.intervals.length,
+    hasSummary,
+    summary: STATE.summary
+  });
+
+  if (!hasIntervals || !hasSummary) {
+    console.warn('[WFM] Empty state rendered: missing intervals or summary.');
+    renderEmptyState();
+    return;
+  }
+
   renderKPIs();
   renderHeatmap();
   drawVolumeChart();
@@ -988,9 +1061,9 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
 });
 
 // Controls
-document.getElementById('weekSelector').addEventListener('change', e => { STATE.weekIdx = +e.target.value; renderAll(); });
-document.getElementById('daySelector').addEventListener('change', e => { STATE.dayIdx = +e.target.value; renderAll(); });
-document.getElementById('intervalSize').addEventListener('change', e => { STATE.intervalMin = +e.target.value; renderAll(); });
+document.getElementById('weekSelector').addEventListener('change', e => { STATE.weekIdx = +e.target.value; initApp(); });
+document.getElementById('daySelector').addEventListener('change', e => { STATE.dayIdx = +e.target.value; initApp(); });
+document.getElementById('intervalSize').addEventListener('change', e => { STATE.intervalMin = +e.target.value; initApp(); });
 document.getElementById('occupancyInput').addEventListener('input', e => { STATE.occupancy = clamp(+e.target.value, 50, 100); renderAll(); });
 document.getElementById('slaTarget').addEventListener('input', e => { STATE.slaTarget = clamp(+e.target.value, 50, 100); renderAll(); });
 
@@ -1078,11 +1151,11 @@ window.addEventListener('resize', () => {
    13. BOOT
 ═══════════════════════════════════════════════════════════ */
 
-window.addEventListener('DOMContentLoaded', () => {
-  renderAll();
+window.onload = () => {
+  initApp();
   // Redraw charts after layout settles
   setTimeout(() => {
     drawVolumeChart();
     drawStaffChart();
   }, 100);
-});
+};
