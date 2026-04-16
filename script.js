@@ -22,6 +22,10 @@ const DAY_VOLUME_PROFILE = {
 const BASE_AHT = 280; // seconds
 const SLOTS_PER_DAY = 28; // 8 AM – 10 PM in 30-min slots
 const START_HOUR = 8;
+const SAMPLE_INTERVAL_DATA = [
+  { time: '09:00', forecast: 100, actual: 120, aht: 300, scheduled: 25 },
+  { time: '09:30', forecast: 110, actual: 140, aht: 320, scheduled: 25 }
+];
 
 function generateSlotTimes(intervalMin) {
   const slots = [];
@@ -206,9 +210,12 @@ const STATE = {
   simVolume: 0,
   simAHT: 0,
   simAgents: 0,
+  rawIntervals: [],
   intervals: [],
   summary: {},
-  slotTimes: []
+  slotTimes: [],
+  engineInsights: [],
+  engineActions: []
 };
 
 function refreshData() {
@@ -216,10 +223,17 @@ function refreshData() {
   const rawDay = rawWeek ? rawWeek[DAYS[STATE.dayIdx]] : null;
 
   if (!rawDay || !rawDay.length) {
-    STATE.slotTimes = [];
-    STATE.intervals = [];
-    STATE.summary = {};
-    console.warn('[WFM] No raw data found for selection.', {
+    STATE.rawIntervals = SAMPLE_INTERVAL_DATA.map((row, i) => ({
+      scaledFcst: row.forecast,
+      actVol: row.actual,
+      fcstAHT: BASE_AHT,
+      actAHT: row.aht,
+      scheduled: row.scheduled,
+      sampleTime: row.time,
+      index: i
+    }));
+    STATE.slotTimes = SAMPLE_INTERVAL_DATA.map(row => `${row.time}–${row.time}`);
+    console.warn('[WFM] Raw data unavailable. Falling back to sample dataset.', {
       weekIdx: STATE.weekIdx,
       dayIdx: STATE.dayIdx,
       day: DAYS[STATE.dayIdx]
@@ -227,17 +241,125 @@ function refreshData() {
     return;
   }
 
+  STATE.rawIntervals = rawDay;
   STATE.slotTimes = generateSlotTimes(STATE.intervalMin);
-  STATE.intervals = calcIntervals(rawDay, STATE.intervalMin, STATE.occupancy);
-  STATE.summary   = calcDaySummary(STATE.intervals);
-  console.log('[WFM] Data refreshed.', {
+  console.log('[WFM] Data loaded.', {
     day: DAYS[STATE.dayIdx],
     week: STATE.weekIdx + 1,
     intervalMin: STATE.intervalMin,
-    intervals: STATE.intervals.length,
-    avgAcc: STATE.summary.avgAcc,
-    totalAct: STATE.summary.totalAct
+    rawIntervals: STATE.rawIntervals.length
   });
+}
+
+function computeAllMetrics() {
+  if (!Array.isArray(STATE.rawIntervals) || !STATE.rawIntervals.length) {
+    STATE.intervals = [];
+    STATE.summary = {};
+    return;
+  }
+  STATE.intervals = calcIntervals(STATE.rawIntervals, STATE.intervalMin, STATE.occupancy);
+  STATE.summary = calcDaySummary(STATE.intervals);
+  console.log('[WFM] Metrics computed.', {
+    intervalCount: STATE.intervals.length,
+    summaryReady: typeof STATE.summary.totalAct === 'number'
+  });
+}
+
+function generateInsights() {
+  const insights = [];
+  STATE.intervals.forEach((row, idx) => {
+    const volPct = row.fcstVol > 0 ? ((row.actualVol - row.fcstVol) / row.fcstVol) * 100 : 0;
+    if (volPct > 10) {
+      insights.push({
+        intervalIndex: idx,
+        interval: STATE.slotTimes[idx] || `#${idx + 1}`,
+        issue: 'Volume spike detected',
+        detail: `Actual volume is +${volPct.toFixed(1)}% vs forecast.`,
+        severity: 2
+      });
+    }
+    const ahtDiff = row.actAHT - row.fcstAHT;
+    if (ahtDiff > 20) {
+      insights.push({
+        intervalIndex: idx,
+        interval: STATE.slotTimes[idx] || `#${idx + 1}`,
+        issue: 'AHT spike increasing workload',
+        detail: `AHT is +${ahtDiff}s vs forecast.`,
+        severity: 2
+      });
+    }
+    if (row.gap < -5) {
+      insights.push({
+        intervalIndex: idx,
+        interval: STATE.slotTimes[idx] || `#${idx + 1}`,
+        issue: 'Critical understaffing',
+        detail: `Gap is ${row.gap.toFixed(1)} FTE.`,
+        severity: 3
+      });
+    }
+  });
+
+  STATE.engineInsights = insights
+    .sort((a, b) => b.severity - a.severity || a.intervalIndex - b.intervalIndex)
+    .slice(0, 3);
+  console.log('[WFM] Insights generated.', STATE.engineInsights);
+}
+
+function generateActions() {
+  const actions = [];
+  STATE.engineInsights.forEach(ins => {
+    const row = STATE.intervals[ins.intervalIndex];
+    if (!row) return;
+
+    if (row.gap < -5) {
+      const otFTE = Math.max(1, Math.ceil(Math.abs(row.gap) / 2));
+      const shiftFTE = Math.max(1, Math.ceil(Math.abs(row.gap) * 0.6));
+      actions.push({
+        interval: ins.interval,
+        issue: 'Understaffed',
+        action: `Add ${otFTE} FTE OT or shift ${shiftFTE} agents from low-load intervals.`
+      });
+      return;
+    }
+
+    if (row.actAHT - row.fcstAHT > 20) {
+      actions.push({
+        interval: ins.interval,
+        issue: 'AHT Spike',
+        action: 'Investigate call drivers and add buffer staffing for next intervals.'
+      });
+      return;
+    }
+
+    if (row.gap > 5) {
+      actions.push({
+        interval: ins.interval,
+        issue: 'Overstaffed',
+        action: 'Offer VTO and move excess agents to upcoming high-risk intervals.'
+      });
+      return;
+    }
+
+    if (row.fcstVol > 0 && ((row.actualVol - row.fcstVol) / row.fcstVol) * 100 > 10) {
+      actions.push({
+        interval: ins.interval,
+        issue: 'Volume Spike',
+        action: 'Trigger intraday reforecast and pull forward break returns.'
+      });
+    }
+  });
+
+  STATE.engineActions = actions;
+  console.log('[WFM] Actions generated.', STATE.engineActions);
+}
+
+function runEngine() {
+  console.log('[WFM] runEngine started.');
+  refreshData();
+  computeAllMetrics();
+  generateInsights();
+  generateActions();
+  renderAll();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -616,64 +738,23 @@ function renderIntervalTable() {
 function renderInsights() {
   const cont = document.getElementById('insightsList');
   if (!cont) return;
-  const s = STATE.summary;
-  const intervals = STATE.intervals;
-  const insights = [];
-
-  // Insight 1: worst accuracy interval
-  const worstAcc = [...intervals].sort((a, b) => a.accuracy - b.accuracy)[0];
-  if (worstAcc) {
-    insights.push({ icon: '🎯', sev: 'high', text: `Peak interval <strong>${STATE.slotTimes[worstAcc.index]}</strong> under-forecasted by <strong>${Math.abs(worstAcc.volVariance)}</strong> calls — accuracy at <strong>${worstAcc.accuracy}%</strong>.` });
+  if (!STATE.engineInsights.length) {
+    cont.innerHTML = `<div class="insight-card insight-sev-low"><div class="insight-icon">ℹ️</div><div class="insight-text">No critical insights detected for the current selection.</div></div>`;
+    return;
   }
 
-  // Insight 2: AHT spike
-  const ahtSpike = [...intervals].sort((a, b) => (b.actAHT - b.fcstAHT) - (a.actAHT - a.fcstAHT))[0];
-  if (ahtSpike && ahtSpike.actAHT > ahtSpike.fcstAHT + 20) {
-    const extra = Math.abs(ahtSpike.ahtImpact).toFixed(1);
-    insights.push({ icon: '⏱', sev: 'high', text: `AHT spike at <strong>${STATE.slotTimes[ahtSpike.index]}</strong> (+${ahtSpike.actAHT - ahtSpike.fcstAHT}s) added <strong>${extra} FTE</strong> workload.` });
-  }
-
-  // Insight 3: Overall ILA
-  if (s.avgAcc < 85) {
-    insights.push({ icon: '📉', sev: 'high', text: `Overall ILA is <strong>${s.avgAcc}%</strong> — below 85% threshold. Review forecast model inputs for ${DAYS[STATE.dayIdx]}.` });
-  }
-
-  // Insight 4: Overstaffed windows
-  const surplus = intervals.filter(r => r.gap > 5).length;
-  if (surplus > 2) {
-    insights.push({ icon: '💼', sev: 'med', text: `<strong>${surplus} intervals</strong> are overstaffed by 5+ FTE. Consider shift flexibility or early logout options.` });
-  }
-
-  // Insight 5: volume trend
-  const volTrend = s.trendFactor;
-  if (volTrend > 1.1) {
-    insights.push({ icon: '📈', sev: 'high', text: `Volume running <strong>+${((volTrend - 1) * 100).toFixed(0)}% above forecast</strong>. Reforecast triggered — review staffing for remaining day.` });
-  } else if (volTrend < 0.9) {
-    insights.push({ icon: '📉', sev: 'med', text: `Volume tracking <strong>${((1 - volTrend) * 100).toFixed(0)}% below forecast</strong>. Consider early shrinkage or training opportunities.` });
-  }
-
-  // Insight 6: Backlog risk
-  if (s.backlog > 40) {
-    insights.push({ icon: '🔴', sev: 'high', text: `Backlog risk: approximately <strong>${s.backlog} calls</strong> may not be handled at current staffing. Escalation recommended.` });
-  }
-
-  // Insight 7: Peak cluster
-  const critCount = intervals.filter(r => r.gap < -5).length;
-  if (critCount >= 3) {
-    insights.push({ icon: '⚠', sev: 'high', text: `<strong>${critCount} consecutive critical intervals</strong> detected. Break clustering may be contributing — review break schedule.` });
-  }
-
-  // Insight 8: positive note
-  const goodCount = intervals.filter(r => r.accuracy >= 90).length;
-  if (goodCount > intervals.length * 0.6) {
-    insights.push({ icon: '✅', sev: 'low', text: `<strong>${goodCount} of ${intervals.length} intervals</strong> hit ≥90% accuracy. Forecast model performing well for lower-volume windows.` });
-  }
-
-  cont.innerHTML = insights.map(ins => `
-    <div class="insight-card insight-sev-${ins.sev}">
-      <div class="insight-icon">${ins.icon}</div>
-      <div class="insight-text">${ins.text}</div>
-    </div>`).join('');
+  cont.innerHTML = STATE.engineInsights.map(ins => {
+    const action = STATE.engineActions.find(a => a.interval === ins.interval);
+    const sev = ins.severity >= 3 ? 'high' : ins.severity === 2 ? 'med' : 'low';
+    return `
+      <div class="insight-card insight-sev-${sev}">
+        <div class="insight-icon">${ins.severity >= 3 ? '🔴' : '🟠'}</div>
+        <div class="insight-text">
+          <strong>${ins.issue}</strong> — ${ins.interval}<br>${ins.detail}
+          ${action ? `<div class="action-item">✅ Action: ${action.action}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -707,6 +788,8 @@ function renderSimulator() {
   const simGap     = +(simIntervals.reduce((s, r) => s + r.gap, 0) / simIntervals.length).toFixed(1);
   const baseCrit   = base.filter(r => r.gap < -3).length;
   const simCrit    = simIntervals.filter(r => r.gap < -3).length;
+  const baseSLAProxy = Math.max(0, Math.min(100, +(100 - Math.max(0, -baseGap) * 3).toFixed(1)));
+  const simSLAProxy = Math.max(0, Math.min(100, +(100 - Math.max(0, -simGap) * 3).toFixed(1)));
 
   const grid = document.getElementById('simImpactGrid');
   if (!grid) return;
@@ -726,7 +809,8 @@ function renderSimulator() {
   grid.innerHTML =
     card('Total Req FTE', baseReqFTE, simReqFTE, '', true) +
     card('Avg Gap', baseGap, simGap, '', true) +
-    card('Critical Intervals', baseCrit, simCrit, '', true);
+    card('Critical Intervals', baseCrit, simCrit, '', true) +
+    card('SLA Proxy %', baseSLAProxy, simSLAProxy, '%', false);
 
   drawSimChart();
 }
@@ -793,6 +877,30 @@ The total staffing gap is caused by three factors:<br><br>
   }
 };
 
+function askCopilot(query) {
+  const q = query.toLowerCase();
+  const s = STATE.summary;
+  const topInsight = STATE.engineInsights[0];
+  const topAction = STATE.engineActions[0];
+
+  if (q.includes('why sla dropping')) {
+    const rootCause = topInsight
+      ? `${topInsight.issue} at ${topInsight.interval}. ${topInsight.detail}`
+      : `Average gap is ${s.avgGap} FTE with ILA ${s.avgAcc}%.`;
+    const action = topAction ? topAction.action : 'Reforecast and rebalance staffing immediately.';
+    return `<strong>Root Cause:</strong> ${rootCause}<br><br><strong>Recommended Action:</strong> ${action}`;
+  }
+
+  if (q.includes('what should i do')) {
+    const actionList = STATE.engineActions.length
+      ? STATE.engineActions.map(a => `• <strong>${a.interval}</strong>: ${a.action}`).join('<br>')
+      : '• Monitor next 2 intervals and hold current staffing.';
+    return `<strong>Action Plan:</strong><br>${actionList}`;
+  }
+
+  return getCopilotResponse(query);
+}
+
 function getCopilotResponse(question) {
   const q = question.toLowerCase();
   if (q.includes('sla') || q.includes('drop') || q.includes('service level')) return COPILOT_RESPONSES['sla dropping']();
@@ -843,6 +951,11 @@ function removeTypingIndicator() {
 function renderEODEmail() {
   const el = document.getElementById('emailPreview');
   if (!el) return;
+  const mail = generateEODSummary();
+  el.innerHTML = mail.body;
+}
+
+function generateEODSummary() {
   const s = STATE.summary;
   const day = DAYS[STATE.dayIdx];
   const week = `Week ${STATE.weekIdx + 1}`;
@@ -857,7 +970,7 @@ function renderEODEmail() {
   if (s.avgGap < -2) rootCause.push(`Staffing gap averaged ${s.avgGap} FTE across the day`);
   if (!rootCause.length) rootCause.push('No major deviations — performance within acceptable thresholds');
 
-  el.innerHTML = `
+  const body = `
 <div class="email-subject">📨 WFM Intraday Summary – ${day}, ${dateStr} (${week})</div>
 <div>To: WFM Leadership | Operations Management | Resource Planning</div>
 <div>From: Abdul Basit – WFM Intelligence Suite (Auto-Generated)</div>
@@ -916,6 +1029,11 @@ ${rootCause.map(r => `<div style="padding:3px 0;color:var(--text-secondary);">�
 Auto-generated by Abdul Basit – WFM Intelligence Suite | Interval Level Accuracy & Intraday Decision Engine<br>
 Keywords: WFM tool, interval accuracy, call center forecasting, intraday management, ILA, staffing gap, SLA projection
 </div>`;
+
+  return {
+    subject: `WFM Intraday Summary – ${dateStr}`,
+    body
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1010,12 +1128,9 @@ function renderEmptyState(message = 'No data available for the selected filters.
 }
 
 function initApp() {
-  console.log('[WFM] initApp started.');
-  refreshData();
-
   const hasIntervals = Array.isArray(STATE.intervals) && STATE.intervals.length > 0;
   const hasSummary = STATE.summary && typeof STATE.summary.totalAct === 'number';
-  console.log('[WFM] initApp validation.', {
+  console.log('[WFM] render validation.', {
     hasIntervals,
     intervalCount: STATE.intervals.length,
     hasSummary,
@@ -1061,11 +1176,11 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
 });
 
 // Controls
-document.getElementById('weekSelector').addEventListener('change', e => { STATE.weekIdx = +e.target.value; initApp(); });
-document.getElementById('daySelector').addEventListener('change', e => { STATE.dayIdx = +e.target.value; initApp(); });
-document.getElementById('intervalSize').addEventListener('change', e => { STATE.intervalMin = +e.target.value; initApp(); });
-document.getElementById('occupancyInput').addEventListener('input', e => { STATE.occupancy = clamp(+e.target.value, 50, 100); renderAll(); });
-document.getElementById('slaTarget').addEventListener('input', e => { STATE.slaTarget = clamp(+e.target.value, 50, 100); renderAll(); });
+document.getElementById('weekSelector').addEventListener('change', e => { STATE.weekIdx = +e.target.value; runEngine(); });
+document.getElementById('daySelector').addEventListener('change', e => { STATE.dayIdx = +e.target.value; runEngine(); });
+document.getElementById('intervalSize').addEventListener('change', e => { STATE.intervalMin = +e.target.value; runEngine(); });
+document.getElementById('occupancyInput').addEventListener('input', e => { STATE.occupancy = clamp(+e.target.value, 50, 100); runEngine(); });
+document.getElementById('slaTarget').addEventListener('input', e => { STATE.slaTarget = clamp(+e.target.value, 50, 100); runEngine(); });
 
 // Simulator sliders
 document.getElementById('simVolume').addEventListener('input', e => {
@@ -1102,7 +1217,7 @@ function sendCopilotQuestion(q) {
   showTypingIndicator();
   setTimeout(() => {
     removeTypingIndicator();
-    appendCopilotMsg(getCopilotResponse(question), false);
+    appendCopilotMsg(askCopilot(question), false);
   }, 900 + Math.random() * 400);
 }
 
@@ -1152,7 +1267,7 @@ window.addEventListener('resize', () => {
 ═══════════════════════════════════════════════════════════ */
 
 window.onload = () => {
-  initApp();
+  runEngine();
   // Redraw charts after layout settles
   setTimeout(() => {
     drawVolumeChart();
