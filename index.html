@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Abdul Basit – WFM Intelligence Suite | Interval Accuracy & Intraday Decision Engine</title>
+  <meta name="description" content="World-class WFM tool for interval-level accuracy, intraday management, call center forecasting, and real-time decision support. Built for senior WFM leaders." />
+  <meta name="keywords" content="WFM tool, interval accuracy, call center forecasting, intraday management, workforce management, ILA, staffing gap, SLA projection" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ═══════════════════════ TOP NAV ═══════════════════════ -->
+<header class="topnav">
+  <div class="nav-brand">
+    <div class="brand-icon">AB</div>
+    <div class="brand-text">
+      <span class="brand-name">Abdul Basit</span>
+      <span class="brand-sub">WFM Intelligence Suite</span>
+    </div>
+  </div>
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="dashboard">⚡ Live Dashboard</button>
+    <button class="nav-tab" data-tab="intervals">📊 Interval Engine</button>
+    <button class="nav-tab" data-tab="simulator">🔬 Simulator</button>
+    <button class="nav-tab" data-tab="insights">🧠 Insights</button>
+    <button class="nav-tab" data-tab="email">📨 EOD Report</button>
+  </nav>
+  <div class="nav-controls">
+    <select id="weekSelector" class="ctrl-select">
+      <option value="0">Week 1 – Jan 6</option>
+      <option value="1">Week 2 – Jan 13</option>
+      <option value="2">Week 3 – Jan 20</option>
+      <option value="3">Week 4 – Jan 27</option>
+      <option value="4">Week 5 – Feb 3</option>
+    </select>
+    <select id="daySelector" class="ctrl-select">
+      <option value="0">Monday</option>
+      <option value="1">Tuesday</option>
+      <option value="2">Wednesday</option>
+      <option value="3">Thursday</option>
+      <option value="4">Friday</option>
+      <option value="5">Saturday</option>
+      <option value="6">Sunday</option>
+    </select>
+    <select id="intervalSize" class="ctrl-select">
+      <option value="15">15-min</option>
+      <option value="30" selected>30-min</option>
+      <option value="60">60-min</option>
+    </select>
+    <div class="live-badge">● LIVE</div>
+  </div>
+</header>
+
+<!-- ═══════════════════════ TABS ═══════════════════════ -->
+
+<!-- ▓▓▓ TAB: DASHBOARD ▓▓▓ -->
+<div class="tab-content active" id="tab-dashboard">
+
+  <!-- KPI Strip -->
+  <section class="kpi-strip">
+    <div class="kpi-card" data-tip="Total calls received today vs forecast. Positive = more volume than expected.">
+      <div class="kpi-label">Today's Volume</div>
+      <div class="kpi-value" id="kpi-volume">—</div>
+      <div class="kpi-delta" id="kpi-volume-delta">—</div>
+    </div>
+    <div class="kpi-card" data-tip="Average Handle Time today vs forecast. Higher AHT = longer calls = more FTE needed.">
+      <div class="kpi-label">Avg AHT (sec)</div>
+      <div class="kpi-value" id="kpi-aht">—</div>
+      <div class="kpi-delta" id="kpi-aht-delta">—</div>
+    </div>
+    <div class="kpi-card" data-tip="Current staffed agents vs required FTE. Negative = understaffed.">
+      <div class="kpi-label">Staffing Gap</div>
+      <div class="kpi-value" id="kpi-gap">—</div>
+      <div class="kpi-delta" id="kpi-gap-label">—</div>
+    </div>
+    <div class="kpi-card" data-tip="Interval Level Accuracy across all intervals today. 100% = perfect forecast.">
+      <div class="kpi-label">ILA Score</div>
+      <div class="kpi-value" id="kpi-ila">—</div>
+      <div class="kpi-delta" id="kpi-ila-label">—</div>
+    </div>
+    <div class="kpi-card" data-tip="Estimated backlog calls if current staffing gap persists through the day.">
+      <div class="kpi-label">Backlog Risk</div>
+      <div class="kpi-value" id="kpi-backlog">—</div>
+      <div class="kpi-delta" id="kpi-backlog-label">—</div>
+    </div>
+    <div class="kpi-card" data-tip="Top 3 critical intervals detected automatically based on FTE gap and volume risk.">
+      <div class="kpi-label">Peak Alerts</div>
+      <div class="kpi-value" id="kpi-peaks">—</div>
+      <div class="kpi-delta" id="kpi-peaks-label">—</div>
+    </div>
+  </section>
+
+  <!-- Main Grid -->
+  <div class="main-grid">
+
+    <!-- Left: Heatmap -->
+    <section class="panel panel-heatmap">
+      <div class="panel-header">
+        <span class="panel-title">Interval Heatmap</span>
+        <span class="panel-hint" data-tip="Red = understaffed. Green = balanced. Blue = overstaffed. Click any interval for detail.">🔥 Color = staffing status</span>
+      </div>
+      <div class="heatmap-legend">
+        <span class="legend-dot red"></span>Understaffed
+        <span class="legend-dot green"></span>Balanced
+        <span class="legend-dot blue"></span>Overstaffed
+      </div>
+      <div class="heatmap-grid" id="heatmapGrid"></div>
+    </section>
+
+    <!-- Right: Charts -->
+    <section class="panel panel-charts">
+      <div class="panel-header">
+        <span class="panel-title">Volume & AHT Trends</span>
+        <span class="panel-hint" data-tip="Bars = actual volume. Line = forecast. Dashed = reforecast (if triggered).">📈 Forecast vs Actual</span>
+      </div>
+      <canvas id="volumeChart" height="180"></canvas>
+      <div class="chart-spacer"></div>
+      <div class="panel-header">
+        <span class="panel-title">Staffing Gap by Interval</span>
+        <span class="panel-hint" data-tip="Gap = Scheduled FTE minus Required FTE. Negative bars = understaffed intervals.">👥 FTE Gap</span>
+      </div>
+      <canvas id="staffChart" height="150"></canvas>
+    </section>
+
+  </div>
+
+  <!-- Error Decomposition + Peak Intervals -->
+  <div class="bottom-grid">
+
+    <section class="panel panel-decomp">
+      <div class="panel-header">
+        <span class="panel-title">Error Decomposition</span>
+        <span class="panel-hint" data-tip="Breaks down WHY the staffing gap exists: volume variance, AHT variance, or scheduling gaps.">🔍 Root cause analysis</span>
+      </div>
+      <div class="decomp-bars" id="decompBars"></div>
+    </section>
+
+    <section class="panel panel-peaks">
+      <div class="panel-header">
+        <span class="panel-title">⚠ Peak Interval Alerts</span>
+        <span class="panel-hint" data-tip="Top 3 critical intervals by SLA risk. Act on these first.">Auto-detected critical windows</span>
+      </div>
+      <div class="peaks-list" id="peaksList"></div>
+    </section>
+
+    <section class="panel panel-reforecast">
+      <div class="panel-header">
+        <span class="panel-title">🔁 Intraday Reforecast</span>
+        <span class="panel-hint" data-tip="Auto-triggered when variance >5%. New Forecast = Actual so far + (Remaining × Trend Factor). Trend = Actual/Forecast so far.">Auto-adjusting projection</span>
+      </div>
+      <div class="reforecast-body" id="reforecastBody"></div>
+    </section>
+
+  </div>
+
+</div>
+
+<!-- ▓▓▓ TAB: INTERVAL ENGINE ▓▓▓ -->
+<div class="tab-content" id="tab-intervals">
+  <div class="panel panel-full">
+    <div class="panel-header">
+      <span class="panel-title">Interval-Level Accuracy Engine</span>
+      <div class="panel-actions">
+        <label class="ctrl-label">Occupancy %
+          <input type="number" id="occupancyInput" value="85" min="50" max="100" class="ctrl-input" />
+        </label>
+        <label class="ctrl-label">SLA Target %
+          <input type="number" id="slaTarget" value="80" min="50" max="100" class="ctrl-input" />
+        </label>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="interval-table" id="intervalTable">
+        <thead>
+          <tr>
+            <th data-tip="Time interval slot">Time</th>
+            <th data-tip="Forecasted call volume for this interval">Fcst Vol</th>
+            <th data-tip="Actual calls received in this interval">Act Vol</th>
+            <th data-tip="Volume Variance = Actual - Forecast. Positive = more calls than expected.">Vol Var</th>
+            <th data-tip="Accuracy % = (1 - |Actual-Forecast| / Forecast) × 100">Accuracy %</th>
+            <th data-tip="Forecasted Average Handle Time in seconds">Fcst AHT</th>
+            <th data-tip="Actual Average Handle Time in seconds">Act AHT</th>
+            <th data-tip="Required FTE = (Volume × AHT) / (3600 × Occupancy). How many agents are mathematically needed.">Req FTE</th>
+            <th data-tip="Scheduled agents for this interval">Sched</th>
+            <th data-tip="Staffing Gap = Scheduled - Required FTE. Negative = understaffed.">Gap</th>
+            <th data-tip="Staffing status: Critical / Warning / OK / Surplus">Status</th>
+          </tr>
+        </thead>
+        <tbody id="intervalBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ▓▓▓ TAB: SIMULATOR ▓▓▓ -->
+<div class="tab-content" id="tab-simulator">
+  <div class="sim-layout">
+    <section class="panel panel-simcontrols">
+      <div class="panel-header"><span class="panel-title">🎛 Real-Time Simulator</span></div>
+      <p class="sim-desc">Adjust parameters below and instantly see the impact on SLA and staffing.</p>
+
+      <div class="sim-group">
+        <label class="sim-label">Volume Adjustment
+          <span class="sim-val" id="simVolLabel">+0%</span>
+        </label>
+        <input type="range" id="simVolume" min="-30" max="50" value="0" class="sim-slider" />
+        <div class="sim-tick-row"><span>-30%</span><span>0%</span><span>+50%</span></div>
+      </div>
+
+      <div class="sim-group">
+        <label class="sim-label">AHT Adjustment (seconds)
+          <span class="sim-val" id="simAHTLabel">+0s</span>
+        </label>
+        <input type="range" id="simAHT" min="-60" max="120" value="0" class="sim-slider" />
+        <div class="sim-tick-row"><span>-60s</span><span>0s</span><span>+120s</span></div>
+      </div>
+
+      <div class="sim-group">
+        <label class="sim-label">Additional Agents
+          <span class="sim-val" id="simAgentsLabel">+0</span>
+        </label>
+        <input type="range" id="simAgents" min="-20" max="30" value="0" class="sim-slider" />
+        <div class="sim-tick-row"><span>-20</span><span>0</span><span>+30</span></div>
+      </div>
+
+      <button class="btn-primary" id="resetSimBtn">↺ Reset Simulator</button>
+    </section>
+
+    <section class="panel panel-simresults">
+      <div class="panel-header"><span class="panel-title">📊 Simulation Results</span></div>
+      <div class="sim-impact-grid" id="simImpactGrid"></div>
+      <canvas id="simChart" height="200"></canvas>
+    </section>
+  </div>
+</div>
+
+<!-- ▓▓▓ TAB: INSIGHTS + AI COPILOT ▓▓▓ -->
+<div class="tab-content" id="tab-insights">
+  <div class="insights-layout">
+
+    <section class="panel panel-copilot">
+      <div class="panel-header">
+        <span class="panel-title">🤖 AI Copilot</span>
+        <span class="panel-hint">Ask anything about today's performance</span>
+      </div>
+      <div class="copilot-history" id="copilotHistory">
+        <div class="copilot-msg bot">
+          <div class="copilot-avatar">AB</div>
+          <div class="copilot-bubble">Hello! I'm your WFM AI Copilot. Ask me anything — "Why is SLA dropping?", "What should I do now?", "Which interval needs attention?" — and I'll give you root-cause analysis and action steps.</div>
+        </div>
+      </div>
+      <div class="copilot-input-row">
+        <input type="text" id="copilotInput" class="copilot-input" placeholder="Ask: Why is SLA dropping? / What should I do now?" />
+        <button class="btn-send" id="copilotSend">▶ Ask</button>
+      </div>
+      <div class="copilot-suggestions">
+        <button class="suggestion-pill" data-q="Why is SLA dropping?">Why is SLA dropping?</button>
+        <button class="suggestion-pill" data-q="What should I do now?">What should I do now?</button>
+        <button class="suggestion-pill" data-q="Which interval is worst?">Which interval is worst?</button>
+        <button class="suggestion-pill" data-q="What caused the staffing gap?">What caused the staffing gap?</button>
+      </div>
+    </section>
+
+    <section class="panel panel-auto-insights">
+      <div class="panel-header"><span class="panel-title">🧠 Smart Insights</span></div>
+      <div class="insights-list" id="insightsList"></div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ▓▓▓ TAB: EOD EMAIL ▓▓▓ -->
+<div class="tab-content" id="tab-email">
+  <div class="panel panel-full">
+    <div class="panel-header">
+      <span class="panel-title">📨 End-of-Day Summary Email Generator</span>
+      <button class="btn-primary" id="copyEmailBtn">📋 Copy to Clipboard</button>
+    </div>
+    <div class="email-preview" id="emailPreview"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════ TOOLTIP ═══════════════════════ -->
+<div class="tooltip-box" id="tooltipBox"></div>
+
+<!-- ═══════════════════════ INTERVAL DETAIL MODAL ═══════════════════════ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div class="modal-content" id="modalContent"></div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
